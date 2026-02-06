@@ -236,19 +236,19 @@ class GosUslugiAPIClient:
     def search_organizations(
         self,
         query: str,
-        region_names: Optional[List[str]] = None,
         page: int = 1,
         per_page: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> List[Dict[str, Any]]:
         """Search organizations (management companies, HOAs) by name, INN, or OGRN.
 
         This is the main method for finding organizations. It searches
         the GIS GKH registry of registered organizations.
 
+        Tip: include city name in query to filter by location,
+        e.g. "управляющая Йошкар-Ола".
+
         Args:
             query: Search string - INN, OGRN, or part of organization name.
-            region_names: Optional list of region names to filter by.
-                Example: ['Республика Марий Эл']
             page: Page number (1-based).
             per_page: Results per page (max ~50).
 
@@ -257,8 +257,8 @@ class GosUslugiAPIClient:
             - guid: Organization GUID (use in get_houses_by_org)
             - shortName / fullName: Organization name
             - inn, ogrn, kpp: Tax identifiers
-            - chiefFio: Director name
-            - roles: List of roles in GIS GKH
+            - chiefName: Director name
+            - organizationRoles: List of roles in GIS GKH
         """
         payload = {
             'sortCriteriaList': [
@@ -292,9 +292,6 @@ class GosUslugiAPIClient:
                 'operand': 'OR',
             },
         }
-
-        if region_names:
-            payload['regionNames'] = region_names
 
         url = (
             f'{self.BASE_URL}ppa/api/rest/services/ppa/'
