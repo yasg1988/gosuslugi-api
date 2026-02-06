@@ -1,95 +1,93 @@
-# GIS ZhKH API Findings (2026-02-06)
+# Исследование API ГИС ЖКХ (2026-02-06)
 
-Research results for dom.gosuslugi.ru public API endpoints.
+Результаты исследования публичных эндпоинтов dom.gosuslugi.ru.
 
-## Two Types of GUIDs
+## Два типа GUID
 
-| Type | Source | Example | Used In |
-|------|--------|---------|---------|
-| **FIAS objectguid** | FIAS database (`as_houses.objectguid`) | `080439f6-256d-433d-9c2b-0363c5a8a686` | `/nsi/.../fias/v4/houses?houseCodes=` |
+| Тип | Источник | Пример | Где используется |
+|-----|----------|--------|-----------------|
+| **FIAS objectguid** | БД ФИАС (`as_houses.objectguid`) | `080439f6-256d-433d-9c2b-0363c5a8a686` | `/nsi/.../fias/v4/houses?houseCodes=` |
 | **GIS GKH GUID** | homemanagement API | `700f05da-b213-41dc-b530-c8a48a214509` | `/homemanagement/.../public/1/`, `/information-disclosure/.../house-info` |
 
-Using the wrong GUID type causes HTTP 500 or empty results.
+Перепутать нельзя — будет HTTP 500 или пустой результат.
 
-## Working Public Endpoints (No Auth)
+## Рабочие публичные эндпоинты (без авторизации)
 
-### 1. Organization Search
+### 1. Поиск организации (УК/ТСЖ)
 ```
 POST /ppa/api/rest/services/ppa/organizations/chooser/search;page=1;itemsPerPage=10
 Content-Type: application/json
 
 {
-  "commonSearchString": "INN or name",
+  "commonSearchString": "ИНН или название",
   "regionNames": ["Республика Марий Эл"],
-  "organizationStatuses": {"coll": ["REGISTERED"], "operand": "OR"},
-  "organizationTypes": {"coll": ["B","L","A"], "operand": "OR"},
   ...
 }
 ```
-Returns: org_guid, name, INN, OGRN, chief name, roles
+**Возвращает:** guid, название, ИНН, ОГРН, ФИО руководителя, роли
 
-### 2. Houses by Organization
+### 2. Дома по организации
 ```
 POST /homemanagement/api/rest/services/houses/public/searchByOrg?pageIndex=1&elementsPerPage=100
 Content-Type: application/json
 
 {"organizationGuid": "...", "calcCount": true}
 ```
-Returns: total count, list of houses with GIS GKH GUID, FIAS GUID, address
+**Возвращает:** общее количество, список домов с GIS GKH GUID, FIAS GUID, адрес
 
-### 3. House Management Details
+### 3. Детали управления домом
 ```
 GET /homemanagement/api/rest/services/houses/public/1/{gisGkhGuid}/
 ```
-Returns: 14KB+ JSON — full management info, address hierarchy
+**Возвращает:** JSON 14KB+ — полная информация об управлении, адресная иерархия
 
-### 4. House Characteristics (information-disclosure)
+### 4. Характеристики дома (information-disclosure)
 ```
 GET /information-disclosure/api/rest/services/disclosures/mkd/house-info?houseGuid={gisGkhGuid}
-Headers: Session-GUID, Request-GUID (random UUIDs)
+Заголовки: Session-GUID, Request-GUID (случайные UUID)
 ```
-Returns: built year, floor count, apartment count, total area, energy efficiency, overhaul fund
+**Возвращает:** год постройки, этажность, кол-во квартир, площадь, энергоэффективность, фонд капремонта
 
-### 5. FIAS House Lookup
+### 5. ФИАС-lookup по objectguid
 ```
 GET /nsi/api/rest/services/nsi/fias/v4/houses?houseCodes={fiasObjectguid}&includeDuplicates=false&actual=true
 ```
-Returns: FIAS address data, postal code. **houseCodes must be UUID, NOT integer objectid!**
+**Возвращает:** данные ФИАС — адрес, почтовый индекс. **houseCodes должен быть UUID, НЕ целое число objectid!**
 
-### 6. Organization Details
+### 6. Детали организации
 ```
 GET /ppa/api/rest/services/ppa/public/organizations/orgByGuid?organizationGuid={guid}
 ```
-Returns: detailed organization information
+**Возвращает:** подробная информация об организации
 
-## Non-Working Endpoints
+## Нерабочие эндпоинты
 
-| Endpoint | Status | Note |
-|----------|--------|------|
-| `/licenses/.../region-license-xls/{region}` | 403 | License download blocked |
-| `/homemanagement/.../houses/search?regionCode=12` | 403 | Requires auth |
-| `/homemanagement/.../public/searchByAddress` | WAF | Bot detection triggered |
-| `/nsi/.../fias/v4/addrobj` | 500 | Endpoint removed |
-| `/nsi/.../fias/v4/search` | 500 | Endpoint removed |
+| Эндпоинт | Статус | Примечание |
+|----------|--------|------------|
+| `/licenses/.../region-license-xls/{region}` | 403 | Скачивание лицензий заблокировано |
+| `/homemanagement/.../houses/search?regionCode=12` | 403 | Требуется авторизация |
+| `/homemanagement/.../public/searchByAddress` | WAF | Срабатывает защита от ботов |
+| `/nsi/.../fias/v4/addrobj` | 500 | Эндпоинт удалён |
+| `/nsi/.../fias/v4/search` | 500 | Эндпоинт удалён |
 
-## Data Collection Workflow
+## Алгоритм сбора данных
 
 ```
-1. Search all management companies in region (search_organizations)
-2. For each org → get list of houses (get_houses_by_org)
-3. For each house → get GIS GKH GUID
-4. By GIS GKH GUID → house characteristics (get_house_info)
-5. By FIAS GUID (from step 2) → link to FIAS database
+1. Найти все управляющие компании региона (search_organizations)
+2. Для каждой организации → список домов (get_houses_by_org)
+3. Для каждого дома → получить GIS GKH GUID
+4. По GIS GKH GUID → характеристики дома (get_house_info)
+5. По FIAS GUID (из шага 2) → связать с БД ФИАС
 ```
 
-## Available House Characteristics
+## Доступные характеристики домов
 
-From `information-disclosure` endpoint:
-- Construction year
-- Number of floors
-- Number of apartments
-- Total building area (sq.m)
-- Energy efficiency class
-- Overhaul fund size
-- Building deterioration percentage
-- Management organization info
+Из эндпоинта `information-disclosure`:
+- Год постройки
+- Количество этажей
+- Количество квартир
+- Общая площадь здания (кв.м)
+- Класс энергоэффективности
+- Фонд капитального ремонта
+- Процент износа здания
+- Информация об управляющей организации

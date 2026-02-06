@@ -1,103 +1,122 @@
 ## gosuslugi-api
 
-#### `gosuslugi-api` is an MIT licensed library written in Python.<br>It was developed to obtain data from `https://dom.gosuslugi.ru/` (GIS GKH)
+Python-библиотека для работы с публичным API `https://dom.gosuslugi.ru/` (ГИС ЖКХ).
 
-> Fork of [GregEremeev/gosuslugi-api](https://github.com/GregEremeev/gosuslugi-api) with updated methods, rate limiting, and documentation.
+> Форк [GregEremeev/gosuslugi-api](https://github.com/GregEremeev/gosuslugi-api) с обновлёнными методами, rate limiting и документацией.
 
-### What data is available (no auth required)
+### Доступные данные (без авторизации)
 
-| Data | Method | Status |
-|------|--------|--------|
-| Organization search (by INN, name) | `search_organizations()` | Working |
-| Organization details | `get_organization()` | Working |
-| Houses by organization | `get_houses_by_org()` | Working |
-| All houses (auto-pagination) | `get_all_houses_by_org()` | Working |
-| House management details | `get_home_management()` | Working |
-| House characteristics (year, floors, area) | `get_house_info()` | Working |
-| FIAS house lookup | `get_actual_houses()` | Working |
-| License info | `get_licenses()` | Blocked (HTTP 403) |
+| Данные | Метод | Статус |
+|--------|-------|--------|
+| Поиск организации (по ИНН, названию) | `search_organizations()` | Работает |
+| Детали организации | `get_organization()` | Работает |
+| Дома по организации | `get_houses_by_org()` | Работает |
+| Все дома (авто-пагинация) | `get_all_houses_by_org()` | Работает |
+| Детали управления домом | `get_home_management()` | Работает |
+| Характеристики дома (год, этажи, площадь) | `get_house_info()` | Работает |
+| ФИАС-lookup по objectguid | `get_actual_houses()` | Работает |
+| Информация о лицензиях | `get_licenses()` | Заблокирован (HTTP 403) |
 
-### Important: Two types of GUIDs
+### Важно: два типа GUID
 
-The API uses two different GUID systems. **Do not mix them!**
+API использует две разные системы GUID. **Не путайте их!**
 
-| GUID type | Source | Used in |
-|-----------|--------|---------|
-| **FIAS objectguid** | FIAS database | `get_actual_houses()` |
-| **GIS GKH GUID** | `get_houses_by_org()` → item `guid` | `get_home_management()`, `get_house_info()` |
+| Тип GUID | Источник | Где используется |
+|----------|----------|-----------------|
+| **FIAS objectguid** | БД ФИАС | `get_actual_houses()` |
+| **GIS GKH GUID** | `get_houses_by_org()` → поле `guid` | `get_home_management()`, `get_house_info()` |
 
-### Quick start
+### Быстрый старт
 
-1. Install the library:
+1. Установка:
 ```bash
 pip install gosuslugi-api
 ```
 
-2. Search organizations and get house data:
+2. Поиск организаций и получение данных о домах:
 
 ```python
 from gosuslugi_api.clients import GosUslugiAPIClient
 
 client = GosUslugiAPIClient()
 
-# Search for management companies in a region
+# Поиск управляющих компаний в регионе
 orgs = client.search_organizations(
     query='управляющая компания',
     region_names=['Республика Марий Эл'],
 )
-print(f'Found {len(orgs)} organizations')
+print(f'Найдено {len(orgs)} организаций')
 
-# Get houses managed by an organization
+# Получить дома под управлением организации
 org_guid = orgs[0]['guid']
 houses = client.get_houses_by_org(org_guid, per_page=10)
-print(f'Total houses: {houses["total"]}')
+print(f'Всего домов: {houses["total"]}')
 
 for house in houses['items']:
-    print(f'  {house.get("address", "N/A")}')
+    print(f'  {house.get("address", "Н/Д")}')
 
-    # Get house characteristics (year, floors, area, apartments)
+    # Характеристики дома (год постройки, этажи, площадь, квартиры)
     gis_guid = house['guid']
     try:
         info = client.get_house_info(gis_guid)
-        print(f'    Built: {info}')
+        print(f'    Данные: {info}')
     except Exception as e:
-        print(f'    Info unavailable: {e}')
+        print(f'    Недоступно: {e}')
 ```
 
-3. Iterate through ALL houses of an organization:
+3. Перебор ВСЕХ домов организации:
 
 ```python
-# Auto-pagination - yields individual house dicts
+# Авто-пагинация — возвращает отдельные записи домов
 for house in client.get_all_houses_by_org(org_guid, per_page=100):
-    print(house.get('address', 'N/A'))
+    print(house.get('address', 'Н/Д'))
 ```
 
-4. FIAS house lookup:
+4. ФИАС-lookup:
 
 ```python
-# Look up by FIAS objectguid (UUID format, NOT integer!)
+# Поиск по FIAS objectguid (формат UUID, НЕ целое число!)
 fias_data = client.get_actual_houses('080439f6-256d-433d-9c2b-0363c5a8a686')
 print(fias_data)
 ```
 
 ### Rate limiting
 
-The client includes built-in rate limiting (0.5 sec between requests by default) to avoid being blocked:
+Клиент включает встроенное ограничение частоты запросов (0.5 сек между запросами по умолчанию):
 
 ```python
-# Custom rate limit
-client = GosUslugiAPIClient(rate_limit=1.0)  # 1 sec between requests
+# Свой интервал
+client = GosUslugiAPIClient(rate_limit=1.0)  # 1 сек между запросами
 
-# Disable rate limiting (not recommended)
+# Отключить ограничение (не рекомендуется)
 client = GosUslugiAPIClient(rate_limit=0)
 ```
 
-### Changes from upstream
+### REST API (FastAPI)
 
-- Added `search_organizations()` with region filtering support
-- Added `get_houses_by_org()` and `get_all_houses_by_org()` for house listings
-- Fixed methods that bypassed the HTTP client (now all go through `_http_client`)
-- Added rate limiting to prevent IP bans
-- Increased default timeout from 3s to 10s
-- Added docstrings and type hints
-- Updated for Python 3.8+
+Библиотека включает FastAPI-обёртку для развёртывания как веб-сервис:
+
+```bash
+docker build -t gis-gkh-api .
+docker run -p 8000:8000 gis-gkh-api
+```
+
+Эндпоинты:
+- `GET /` — health check
+- `GET /organizations/search?query=ИНН&region=Республика Марий Эл` — поиск организаций
+- `GET /organizations/{guid}` — детали организации
+- `GET /organizations/{guid}/houses` — дома организации
+- `GET /houses/{guid}/management` — детали управления домом
+- `GET /houses/{guid}/info` — характеристики дома
+- `GET /fias/houses/{fias_guid}` — ФИАС-lookup
+
+### Изменения относительно оригинала
+
+- Добавлен `search_organizations()` с фильтрацией по региону
+- Добавлены `get_houses_by_org()` и `get_all_houses_by_org()` для списков домов
+- Исправлены методы, обходившие HTTP-клиент (теперь все через `_http_client`)
+- Добавлен rate limiting для предотвращения блокировки IP
+- Увеличен таймаут по умолчанию с 3 до 10 секунд
+- Добавлены docstrings и type hints
+- Обновлено для Python 3.8+
+- Добавлена FastAPI-обёртка и Dockerfile
