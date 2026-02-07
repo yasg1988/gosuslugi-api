@@ -99,6 +99,21 @@ def _is_empty(data):
     return False
 
 
+def _fix_date(val):
+    """Convert DD.MM.YYYY to YYYY-MM-DD for PostgreSQL. Pass through other formats."""
+    if not val or not isinstance(val, str):
+        return val
+    val = val.strip()
+    # DD.MM.YYYY → YYYY-MM-DD
+    if len(val) == 10 and val[2] == "." and val[5] == ".":
+        try:
+            d, m, y = val.split(".")
+            return f"{y}-{m}-{d}"
+        except ValueError:
+            pass
+    return val
+
+
 # ============ Field extraction helpers ============
 
 def _extract_org(search_item, detail=None):
@@ -160,7 +175,7 @@ def _extract_org(search_item, detail=None):
         org["url"] = detail.get("url") or detail.get("site")
         org["okopf_code"] = detail.get("okopfCode")
         org["okopf_name"] = detail.get("okopfName")
-        org["state_registration_date"] = detail.get("stateRegistrationDate")
+        org["state_registration_date"] = _fix_date(detail.get("stateRegistrationDate"))
 
         # Addresses (can be dict with formattedAddress or string)
         for field, key in [("org_address", "legalAddress"),
@@ -202,7 +217,7 @@ def _extract_house(item, fias_data=None):
         "reconstruction_year": item.get("reconstructionYear"),
         "max_floor_count": item.get("maxFloorCount") or item.get("floorCount"),
         "deterioration": item.get("deterioration"),
-        "deterioration_date": item.get("deteriorationDate"),
+        "deterioration_date": _fix_date(item.get("deteriorationDate")),
         "total_square": item.get("totalSquare"),
         "residential_square": item.get("residentialSquare"),
         "residential_premise_count": item.get("residentialPremiseCount"),
@@ -287,9 +302,9 @@ def _extract_characteristics(gis_guid, info):
         "energy_efficiency_name": None,
         "overhaul_fund_forming_code": None,
         "overhaul_fund_forming_name": None,
-        "management_agreement_date": info.get("managementAgreementDate"),
+        "management_agreement_date": _fix_date(info.get("managementAgreementDate")),
         "management_agreement_type": info.get("managementAgreementType"),
-        "last_update_date": info.get("lastUpdateDate"),
+        "last_update_date": _fix_date(info.get("lastUpdateDate")),
     }
 
     # Energy efficiency
@@ -331,8 +346,8 @@ def _extract_overhaul_funds(gis_guid, info):
             "fund_attribute_name": fund_attr.get("name"),
             "fund_attribute_tag": fund_attr.get("tag"),
             "status": f.get("status"),
-            "start_date": f.get("startDate"),
-            "end_date": f.get("endDate"),
+            "start_date": _fix_date(f.get("startDate")),
+            "end_date": _fix_date(f.get("endDate")),
         })
 
     return funds
@@ -349,8 +364,8 @@ def _extract_management(gis_guid, data):
         "management_type_name": None,
         "life_cycle_stage_code": None,
         "life_cycle_stage_name": None,
-        "management_contract_date": data.get("managementContractDate"),
-        "end_contract_date": data.get("endContractDate"),
+        "management_contract_date": _fix_date(data.get("managementContractDate")),
+        "end_contract_date": _fix_date(data.get("endContractDate")),
         "management_org_role": data.get("managementOrgRole"),
     }
 
