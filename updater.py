@@ -376,59 +376,39 @@ def _extract_management(gis_guid, data):
 # ============ Main update functions ============
 
 def update_organizations():
-    """Fetch and upsert all organizations for Yoshkar-Ola."""
+    """Refresh all existing organizations by their GUIDs.
+
+    Reads org GUIDs from the database (already discovered during initial load),
+    fetches fresh details for each via get_organization(guid), and upserts.
+    """
     _reset_state("organizations")
     api = GosUslugiAPIClient(timeout=15, keep_alive=True, rate_limit=1.0)
 
     try:
+        org_guids = database.get_all_org_guids()
+        _set_state(total=len(org_guids))
+        logger.info(f"Refreshing {len(org_guids)} organizations...")
+
         all_orgs = []
-        page = 1
-        per_page = 50
-
-        while True:
-            logger.info(f"Fetching organizations page {page}...")
-            raw = api.search_organizations("Йошкар-Ола", page=page, per_page=per_page)
-
-            # Response can be list or dict with elements/items
-            if isinstance(raw, dict):
-                items = raw.get("elements") or raw.get("items") or raw.get("coll") or []
-            elif isinstance(raw, list):
-                items = raw
-            else:
-                items = []
-
-            if not items:
-                break
-
-            for item in items:
-                if not isinstance(item, dict):
+        for i, guid in enumerate(org_guids):
+            try:
+                detail = api.get_organization(guid)
+                if _is_empty(detail):
+                    logger.warning(f"Empty org detail for {guid}, skipping")
                     continue
-                guid = item.get("guid")
-                if not guid:
-                    continue
-                try:
-                    detail = None
-                    try:
-                        detail = api.get_organization(guid)
-                    except Exception as e:
-                        logger.warning(f"Failed to get org detail {guid}: {e}")
 
-                    org = _extract_org(item, detail)
-                    if org["gis_guid"]:
-                        all_orgs.append(org)
-                except Exception as e:
-                    _add_error(f"org {guid}: {e}")
-                    logger.error(f"Error processing org {guid}: {e}")
+                # Build org dict from detail response
+                org = _extract_org(detail, detail)
+                org["gis_guid"] = guid  # ensure GUID is set
+                all_orgs.append(org)
+            except Exception as e:
+                _add_error(f"org {guid}: {e}")
+                logger.error(f"Error refreshing org {guid}: {e}")
 
-            _set_state(progress=len(all_orgs))
+            _set_state(progress=i + 1)
 
-            if len(items) < per_page:
-                break
-            page += 1
-
-        _set_state(total=len(all_orgs))
         count = database.upsert_organizations(all_orgs)
-        _finish_state(f"Upserted {count} organizations")
+        _finish_state(f"Refreshed {count} of {len(org_guids)} organizations")
         logger.info(f"Organizations update done: {count}")
 
     except Exception as e:
