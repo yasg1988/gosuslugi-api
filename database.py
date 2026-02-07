@@ -60,14 +60,14 @@ def upsert_organizations(orgs: list[dict]) -> int:
                         phone, fax, email, url,
                         chief_last_name, chief_first_name, chief_middle_name,
                         okopf_code, okopf_name, state_registration_date,
-                        org_roles, updated_at
+                        org_roles, ogrn_ip, org_oid, is_branch, updated_at
                     ) VALUES (
                         %(gis_guid)s, %(full_name)s, %(short_name)s, %(inn)s, %(ogrn)s, %(kpp)s,
                         %(org_type)s, %(org_address)s, %(postal_address)s, %(factual_address)s,
                         %(phone)s, %(fax)s, %(email)s, %(url)s,
                         %(chief_last_name)s, %(chief_first_name)s, %(chief_middle_name)s,
                         %(okopf_code)s, %(okopf_name)s, %(state_registration_date)s,
-                        %(org_roles)s, NOW()
+                        %(org_roles)s, %(ogrn_ip)s, %(org_oid)s, %(is_branch)s, NOW()
                     )
                     ON CONFLICT (gis_guid) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
@@ -90,6 +90,9 @@ def upsert_organizations(orgs: list[dict]) -> int:
                         okopf_name = EXCLUDED.okopf_name,
                         state_registration_date = EXCLUDED.state_registration_date,
                         org_roles = EXCLUDED.org_roles,
+                        ogrn_ip = EXCLUDED.ogrn_ip,
+                        org_oid = EXCLUDED.org_oid,
+                        is_branch = EXCLUDED.is_branch,
                         updated_at = NOW()
                 """, org)
                 count += 1
@@ -198,7 +201,11 @@ def upsert_house_characteristics(chars: list[dict]) -> int:
                         energy_efficiency_code, energy_efficiency_name,
                         overhaul_fund_forming_code, overhaul_fund_forming_name,
                         management_agreement_date, management_agreement_type,
-                        last_update_date, updated_at
+                        last_update_date,
+                        common_props_square, house_is_emergency, emergency_reason,
+                        emergency_doc_number, emergency_doc_date,
+                        land_plot_square, land_plot_cadastre_numbers, operation_year,
+                        updated_at
                     ) VALUES (
                         %(gis_guid)s, %(porch_count)s, %(lift_count)s, %(building_series_type)s,
                         %(premise_count)s, %(residential_premise_total_square)s,
@@ -206,7 +213,11 @@ def upsert_house_characteristics(chars: list[dict]) -> int:
                         %(energy_efficiency_code)s, %(energy_efficiency_name)s,
                         %(overhaul_fund_forming_code)s, %(overhaul_fund_forming_name)s,
                         %(management_agreement_date)s, %(management_agreement_type)s,
-                        %(last_update_date)s, NOW()
+                        %(last_update_date)s,
+                        %(common_props_square)s, %(house_is_emergency)s, %(emergency_reason)s,
+                        %(emergency_doc_number)s, %(emergency_doc_date)s,
+                        %(land_plot_square)s, %(land_plot_cadastre_numbers)s, %(operation_year)s,
+                        NOW()
                     )
                     ON CONFLICT (gis_guid) DO UPDATE SET
                         porch_count = EXCLUDED.porch_count,
@@ -223,6 +234,14 @@ def upsert_house_characteristics(chars: list[dict]) -> int:
                         management_agreement_date = EXCLUDED.management_agreement_date,
                         management_agreement_type = EXCLUDED.management_agreement_type,
                         last_update_date = EXCLUDED.last_update_date,
+                        common_props_square = EXCLUDED.common_props_square,
+                        house_is_emergency = EXCLUDED.house_is_emergency,
+                        emergency_reason = EXCLUDED.emergency_reason,
+                        emergency_doc_number = EXCLUDED.emergency_doc_number,
+                        emergency_doc_date = EXCLUDED.emergency_doc_date,
+                        land_plot_square = EXCLUDED.land_plot_square,
+                        land_plot_cadastre_numbers = EXCLUDED.land_plot_cadastre_numbers,
+                        operation_year = EXCLUDED.operation_year,
                         updated_at = NOW()
                 """, c)
                 count += 1
@@ -248,11 +267,13 @@ def upsert_overhaul_fund(funds: list[dict]) -> int:
                     INSERT INTO gis_zhkh.overhaul_fund (
                         gis_guid, fund_forming_code, fund_forming_name,
                         fund_attribute_code, fund_attribute_name, fund_attribute_tag,
-                        status, start_date, end_date, updated_at
+                        status, start_date, end_date,
+                        overhaul_fund_forming_method, updated_at
                     ) VALUES (
                         %(gis_guid)s, %(fund_forming_code)s, %(fund_forming_name)s,
                         %(fund_attribute_code)s, %(fund_attribute_name)s, %(fund_attribute_tag)s,
-                        %(status)s, %(start_date)s, %(end_date)s, NOW()
+                        %(status)s, %(start_date)s, %(end_date)s,
+                        %(overhaul_fund_forming_method)s, NOW()
                     )
                     ON CONFLICT (gis_guid) DO UPDATE SET
                         fund_forming_code = EXCLUDED.fund_forming_code,
@@ -263,6 +284,7 @@ def upsert_overhaul_fund(funds: list[dict]) -> int:
                         status = EXCLUDED.status,
                         start_date = EXCLUDED.start_date,
                         end_date = EXCLUDED.end_date,
+                        overhaul_fund_forming_method = EXCLUDED.overhaul_fund_forming_method,
                         updated_at = NOW()
                 """, f)
                 count += 1
@@ -289,12 +311,24 @@ def upsert_house_management(mgmt_list: list[dict]) -> int:
                         gis_guid, management_type_code, management_type_name,
                         life_cycle_stage_code, life_cycle_stage_name,
                         management_contract_date, end_contract_date,
-                        management_org_role, updated_at
+                        management_org_role,
+                        house_management_type_code, house_management_type_name,
+                        int_wall_material, energy_efficiency, energy_inspection_date,
+                        cultural_heritage, land_plot_cadastre_number,
+                        emergency_doc_number, emergency_doc_date,
+                        overhaul_fund_contribution, underground_floor_count,
+                        building_square, updated_at
                     ) VALUES (
                         %(gis_guid)s, %(management_type_code)s, %(management_type_name)s,
                         %(life_cycle_stage_code)s, %(life_cycle_stage_name)s,
                         %(management_contract_date)s, %(end_contract_date)s,
-                        %(management_org_role)s, NOW()
+                        %(management_org_role)s,
+                        %(house_management_type_code)s, %(house_management_type_name)s,
+                        %(int_wall_material)s, %(energy_efficiency)s, %(energy_inspection_date)s,
+                        %(cultural_heritage)s, %(land_plot_cadastre_number)s,
+                        %(emergency_doc_number)s, %(emergency_doc_date)s,
+                        %(overhaul_fund_contribution)s, %(underground_floor_count)s,
+                        %(building_square)s, NOW()
                     )
                     ON CONFLICT (gis_guid) DO UPDATE SET
                         management_type_code = EXCLUDED.management_type_code,
@@ -304,6 +338,18 @@ def upsert_house_management(mgmt_list: list[dict]) -> int:
                         management_contract_date = EXCLUDED.management_contract_date,
                         end_contract_date = EXCLUDED.end_contract_date,
                         management_org_role = EXCLUDED.management_org_role,
+                        house_management_type_code = EXCLUDED.house_management_type_code,
+                        house_management_type_name = EXCLUDED.house_management_type_name,
+                        int_wall_material = EXCLUDED.int_wall_material,
+                        energy_efficiency = EXCLUDED.energy_efficiency,
+                        energy_inspection_date = EXCLUDED.energy_inspection_date,
+                        cultural_heritage = EXCLUDED.cultural_heritage,
+                        land_plot_cadastre_number = EXCLUDED.land_plot_cadastre_number,
+                        emergency_doc_number = EXCLUDED.emergency_doc_number,
+                        emergency_doc_date = EXCLUDED.emergency_doc_date,
+                        overhaul_fund_contribution = EXCLUDED.overhaul_fund_contribution,
+                        underground_floor_count = EXCLUDED.underground_floor_count,
+                        building_square = EXCLUDED.building_square,
                         updated_at = NOW()
                 """, m)
                 count += 1

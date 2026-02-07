@@ -100,10 +100,13 @@ def _is_empty(data):
 
 
 def _fix_date(val):
-    """Convert DD.MM.YYYY to YYYY-MM-DD for PostgreSQL. Pass through other formats."""
+    """Convert DD.MM.YYYY or DD.MM.YYYY HH:MM:SS to YYYY-MM-DD for PostgreSQL."""
     if not val or not isinstance(val, str):
         return val
     val = val.strip()
+    # Strip time part if present (e.g., "27.01.2020 00:00:00")
+    if " " in val:
+        val = val.split(" ")[0]
     # DD.MM.YYYY → YYYY-MM-DD
     if len(val) == 10 and val[2] == "." and val[5] == ".":
         try:
@@ -140,6 +143,9 @@ def _extract_org(search_item, detail=None):
         "okopf_name": None,
         "state_registration_date": None,
         "org_roles": None,
+        "ogrn_ip": None,
+        "org_oid": None,
+        "is_branch": None,
     }
 
     # Roles from search result
@@ -148,7 +154,12 @@ def _extract_org(search_item, detail=None):
         role_names = []
         for r in roles:
             if isinstance(r, dict):
-                role_names.append(r.get("roleName") or r.get("name") or "")
+                # role can be nested: r.role.roleName or flat r.roleName
+                role_obj = r.get("role") or r
+                if isinstance(role_obj, dict):
+                    role_names.append(role_obj.get("roleName") or role_obj.get("name") or "")
+                else:
+                    role_names.append(r.get("roleName") or r.get("name") or "")
             elif isinstance(r, str):
                 role_names.append(r)
         org["org_roles"] = "; ".join(filter(None, role_names)) or None
@@ -170,15 +181,31 @@ def _extract_org(search_item, detail=None):
         org["short_name"] = detail.get("shortName") or org["short_name"]
         org["org_type"] = detail.get("organizationType")
         org["phone"] = detail.get("phone")
-        org["fax"] = detail.get("fax")
-        org["email"] = detail.get("email")
+        org["email"] = detail.get("orgEmail") or detail.get("email")
         org["url"] = detail.get("url") or detail.get("site")
-        org["okopf_code"] = detail.get("okopfCode")
-        org["okopf_name"] = detail.get("okopfName")
         org["state_registration_date"] = _fix_date(detail.get("stateRegistrationDate"))
+        org["ogrn_ip"] = detail.get("ogrnip")
+        org["org_oid"] = detail.get("orgOid")
+        org["is_branch"] = detail.get("branch")
+
+        # Faxes (list or string)
+        faxes = detail.get("faxes") or detail.get("fax")
+        if isinstance(faxes, list):
+            org["fax"] = "; ".join(str(f) for f in faxes if f) or None
+        elif faxes:
+            org["fax"] = str(faxes)
+
+        # OKOPF (nested dict or flat fields)
+        okopf = detail.get("okopf")
+        if isinstance(okopf, dict):
+            org["okopf_code"] = okopf.get("code")
+            org["okopf_name"] = okopf.get("name")
+        else:
+            org["okopf_code"] = detail.get("okopfCode")
+            org["okopf_name"] = detail.get("okopfName")
 
         # Addresses (can be dict with formattedAddress or string)
-        for field, key in [("org_address", "legalAddress"),
+        for field, key in [("org_address", "orgAddress"),
                            ("postal_address", "postalAddress"),
                            ("factual_address", "factualAddress")]:
             val = detail.get(key)
@@ -186,6 +213,13 @@ def _extract_org(search_item, detail=None):
                 org[field] = val.get("formattedAddress")
             elif isinstance(val, str):
                 org[field] = val
+        # Fallback for legalAddress
+        if not org["org_address"]:
+            val = detail.get("legalAddress")
+            if isinstance(val, dict):
+                org["org_address"] = val.get("formattedAddress")
+            elif isinstance(val, str):
+                org["org_address"] = val
 
         # Chief from detail (separate fields override parsed name)
         if detail.get("chiefLastName"):
@@ -302,25 +336,59 @@ def _extract_characteristics(gis_guid, info):
         "energy_efficiency_name": None,
         "overhaul_fund_forming_code": None,
         "overhaul_fund_forming_name": None,
-        "management_agreement_date": _fix_date(info.get("managementAgreementDate")),
+        "management_agreement_date": None,
         "management_agreement_type": info.get("managementAgreementType"),
         "last_update_date": _fix_date(info.get("lastUpdateDate")),
+        "common_props_square": info.get("commonPropsSquare"),
+        "house_is_emergency": info.get("houseIsEmergency"),
+        "emergency_reason": info.get("emergencyHouseReason"),
+        "emergency_doc_number": None,
+        "emergency_doc_date": None,
+        "land_plot_square": None,
+        "land_plot_cadastre_numbers": None,
+        "operation_year": info.get("operationYear"),
     }
+
+    # Management agreement date (nested or flat)
+    ma = info.get("managementAgreement")
+    if isinstance(ma, dict):
+        chars["management_agreement_date"] = _fix_date(ma.get("regDate"))
+        chars["management_agreement_type"] = ma.get("documentType") or chars["management_agreement_type"]
+    else:
+        chars["management_agreement_date"] = _fix_date(info.get("managementAgreementDate"))
+
+    # Emergency document (nested dict)
+    emerg_doc = info.get("confirmEmergencyHouseDocument")
+    if isinstance(emerg_doc, dict):
+        chars["emergency_doc_number"] = emerg_doc.get("number")
+        chars["emergency_doc_date"] = _fix_date(emerg_doc.get("regDate"))
+
+    # Land plot data (arrays → JSON strings)
+    lp_square = info.get("landPlotSquareEOParams")
+    if isinstance(lp_square, list) and lp_square:
+        import json
+        chars["land_plot_square"] = json.dumps(lp_square)
+
+    lp_cadastre = info.get("landPlotCadastreNumberEOParams")
+    if isinstance(lp_cadastre, list) and lp_cadastre:
+        import json
+        chars["land_plot_cadastre_numbers"] = json.dumps(lp_cadastre, ensure_ascii=False)
 
     # Energy efficiency
     ee = info.get("energyEfficiency") or info.get("energyEfficiencyClass") or {}
     if isinstance(ee, dict):
-        chars["energy_efficiency_code"] = ee.get("code")
-        chars["energy_efficiency_name"] = ee.get("name")
+        chars["energy_efficiency_code"] = ee.get("code") or ee.get("energyEfficiencyDesignation")
+        chars["energy_efficiency_name"] = ee.get("name") or ee.get("energyEfficiencyName")
     elif isinstance(ee, str):
         chars["energy_efficiency_name"] = ee
 
-    # Overhaul fund forming summary (first active entry)
-    fund_list = info.get("overhaulFundForming") or info.get("overhaulFundFormingList") or []
-    if isinstance(fund_list, list) and fund_list:
+    # Overhaul fund forming summary (first active entry; may be dict or list)
+    fund_raw = info.get("overhaulFundForming") or info.get("overhaulFundFormingList") or []
+    fund_list = fund_raw if isinstance(fund_raw, list) else [fund_raw] if isinstance(fund_raw, dict) else []
+    if fund_list:
         first = fund_list[0] if isinstance(fund_list[0], dict) else {}
         chars["overhaul_fund_forming_code"] = first.get("code") or first.get("fundFormingCode")
-        chars["overhaul_fund_forming_name"] = first.get("name") or first.get("fundFormingName")
+        chars["overhaul_fund_forming_name"] = first.get("name") or first.get("fundFormingName") or first.get("overhaulFundFormingMethod")
 
     return chars
 
@@ -330,7 +398,10 @@ def _extract_overhaul_funds(gis_guid, info):
     if not info or not isinstance(info, dict):
         return []
 
-    fund_list = info.get("overhaulFundForming") or info.get("overhaulFundFormingList") or []
+    fund_raw = info.get("overhaulFundForming") or info.get("overhaulFundFormingList") or []
+    # Handle single dict (not wrapped in list)
+    fund_list = fund_raw if isinstance(fund_raw, list) else [fund_raw] if isinstance(fund_raw, dict) else []
+
     funds = []
     for f in fund_list:
         if not isinstance(f, dict):
@@ -348,6 +419,7 @@ def _extract_overhaul_funds(gis_guid, info):
             "status": f.get("status"),
             "start_date": _fix_date(f.get("startDate")),
             "end_date": _fix_date(f.get("endDate")),
+            "overhaul_fund_forming_method": f.get("overhaulFundFormingMethod") or f.get("majorRepairsFormingMethod"),
         })
 
     return funds
@@ -367,6 +439,18 @@ def _extract_management(gis_guid, data):
         "management_contract_date": _fix_date(data.get("managementContractDate")),
         "end_contract_date": _fix_date(data.get("endContractDate")),
         "management_org_role": data.get("managementOrgRole"),
+        "house_management_type_code": None,
+        "house_management_type_name": None,
+        "int_wall_material": data.get("intWallMaterialList"),
+        "energy_efficiency": None,
+        "energy_inspection_date": _fix_date(data.get("energyInspectionDate")),
+        "cultural_heritage": data.get("culturalHeritage"),
+        "land_plot_cadastre_number": data.get("landPlotCadastreNumber"),
+        "emergency_doc_number": data.get("emergencyDocumentNumber"),
+        "emergency_doc_date": _fix_date(data.get("emergencyDocumentDate")),
+        "overhaul_fund_contribution": data.get("overhaulFundContribution"),
+        "underground_floor_count": data.get("undergroundFloorCount"),
+        "building_square": data.get("buildingSquare"),
     }
 
     # Management type (nested dict or flat)
@@ -381,9 +465,22 @@ def _extract_management(gis_guid, data):
     lcs = data.get("lifeCycleStage") or {}
     if isinstance(lcs, dict):
         record["life_cycle_stage_code"] = lcs.get("code")
-        record["life_cycle_stage_name"] = lcs.get("name")
+        record["life_cycle_stage_name"] = lcs.get("name") or lcs.get("lifeCycleStage")
     record["life_cycle_stage_code"] = record["life_cycle_stage_code"] or data.get("lifeCycleStageCode")
     record["life_cycle_stage_name"] = record["life_cycle_stage_name"] or data.get("lifeCycleStageName")
+
+    # House management type (способ управления)
+    hmt = data.get("houseManagementType") or {}
+    if isinstance(hmt, dict):
+        record["house_management_type_code"] = hmt.get("code")
+        record["house_management_type_name"] = hmt.get("houseManagementTypeName") or hmt.get("name")
+
+    # Energy efficiency (string or dict)
+    ee = data.get("houseEnergyEfficiency")
+    if isinstance(ee, dict):
+        record["energy_efficiency"] = ee.get("name") or ee.get("code")
+    elif ee:
+        record["energy_efficiency"] = str(ee)
 
     return record
 
