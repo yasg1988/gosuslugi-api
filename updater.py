@@ -170,7 +170,8 @@ def _extract_org(search_item, detail=None):
                     role_names.append(name)
             elif isinstance(r, str):
                 role_names.append(r)
-        org["org_roles"] = "; ".join(filter(None, role_names)) or None
+        filtered = list(filter(None, role_names))
+        org["org_roles"] = filtered if filtered else None
 
     # Chief name from search (may be a single string)
     chief_name = search_item.get("chiefName") or ""
