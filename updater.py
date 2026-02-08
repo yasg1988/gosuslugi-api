@@ -148,18 +148,26 @@ def _extract_org(search_item, detail=None):
         "is_branch": None,
     }
 
-    # Roles from search result
+    # Roles from search result or detail
     roles = search_item.get("organizationRoles") or []
     if roles:
         role_names = []
         for r in roles:
             if isinstance(r, dict):
-                # role can be nested: r.role.roleName or flat r.roleName
-                role_obj = r.get("role") or r
+                # Nested: r.role.organizationRoleName (API actual structure)
+                role_obj = r.get("role")
                 if isinstance(role_obj, dict):
-                    role_names.append(role_obj.get("roleName") or role_obj.get("name") or "")
+                    name = (role_obj.get("organizationRoleName")
+                            or role_obj.get("shortName")
+                            or role_obj.get("roleName")
+                            or role_obj.get("name") or "")
+                    role_names.append(name)
                 else:
-                    role_names.append(r.get("roleName") or r.get("name") or "")
+                    # Flat structure fallback
+                    name = (r.get("organizationRoleName")
+                            or r.get("roleName")
+                            or r.get("name") or "")
+                    role_names.append(name)
             elif isinstance(r, str):
                 role_names.append(r)
         org["org_roles"] = "; ".join(filter(None, role_names)) or None
