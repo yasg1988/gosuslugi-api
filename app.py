@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI, Query, HTTPException, BackgroundTasks
 from gosuslugi_api.clients import GosUslugiAPIClient
 import updater
+import database
 
 logging.basicConfig(level=logging.INFO)
 
@@ -155,3 +156,45 @@ def start_update_management(
 def get_update_status():
     """Статус текущего/последнего обновления."""
     return updater.get_status()
+
+
+# ============ Monitoring endpoints ============
+
+@app.get("/monitoring")
+def get_monitoring():
+    """Сводка мониторинга: свежесть данных, заполненность полей, статус обновления."""
+    STALE_HOURS = 26  # alert if data older than 26 hours (crons run daily)
+    try:
+        freshness = database.get_data_freshness()
+        fill_rates = database.get_field_fill_rates()
+        update_status = updater.get_status()
+
+        alerts = []
+        for row in freshness:
+            hours = row.get("hours_since_update")
+            if hours is not None and hours > STALE_HOURS:
+                alerts.append(
+                    f"{row['table_name']}: data is {hours:.1f}h old (threshold: {STALE_HOURS}h)"
+                )
+
+        if update_status.get("status") == "error":
+            alerts.append(f"Last update failed: {update_status.get('result', 'unknown')}")
+
+        return {
+            "status": "ok" if not alerts else "warning",
+            "alerts": alerts,
+            "freshness": freshness,
+            "fill_rates": fill_rates,
+            "last_update": update_status,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/monitoring/freshness")
+def get_freshness():
+    """Свежесть данных по таблицам."""
+    try:
+        return database.get_data_freshness()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

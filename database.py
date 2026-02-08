@@ -362,6 +362,71 @@ def upsert_house_management(mgmt_list: list[dict]) -> int:
     return count
 
 
+def get_data_freshness() -> list[dict]:
+    """Get data freshness stats from v_data_freshness view."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT table_name, total_rows, with_updated_at,
+                       oldest_update, newest_update, hours_since_update
+                FROM gis_zhkh.v_data_freshness
+            """)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_field_fill_rates() -> list[dict]:
+    """Get fill rates for key fields across tables."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 'organizations' AS table_name,
+                       COUNT(*) AS total,
+                       COUNT(inn) AS inn,
+                       COUNT(ogrn) AS ogrn,
+                       COUNT(email) AS email,
+                       COUNT(phone) AS phone,
+                       COUNT(org_roles) AS org_roles,
+                       COUNT(org_oid) AS org_oid
+                FROM gis_zhkh.organizations
+            """)
+            org_cols = [d[0] for d in cur.description]
+            org_row = dict(zip(org_cols, cur.fetchone()))
+
+            cur.execute("""
+                SELECT 'houses' AS table_name,
+                       COUNT(*) AS total,
+                       COUNT(fias_guid) AS fias_guid,
+                       COUNT(cadastre_number) AS cadastre_number,
+                       COUNT(building_year) AS building_year,
+                       COUNT(total_square) AS total_square,
+                       COUNT(wall_material) AS wall_material
+                FROM gis_zhkh.houses
+            """)
+            house_cols = [d[0] for d in cur.description]
+            house_row = dict(zip(house_cols, cur.fetchone()))
+
+            cur.execute("""
+                SELECT 'house_management' AS table_name,
+                       COUNT(*) AS total,
+                       COUNT(house_management_type_name) AS mgmt_type,
+                       COUNT(int_wall_material) AS wall_material,
+                       COUNT(emergency_doc_number) AS emergency_doc,
+                       COUNT(energy_efficiency) AS energy_eff
+                FROM gis_zhkh.house_management
+            """)
+            mgmt_cols = [d[0] for d in cur.description]
+            mgmt_row = dict(zip(mgmt_cols, cur.fetchone()))
+
+            return [org_row, house_row, mgmt_row]
+    finally:
+        conn.close()
+
+
 def replace_house_org_links(house_guid: str, org_guids: list[str], table: str) -> int:
     """Replace org links for a house (DELETE + INSERT). table is 'house_municipality_orgs' or 'house_resource_providers'."""
     if table not in ("house_municipality_orgs", "house_resource_providers"):
