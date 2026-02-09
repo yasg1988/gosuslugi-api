@@ -236,6 +236,11 @@ def _extract_org(search_item, detail=None):
             org["chief_first_name"] = detail.get("chiefFirstName")
             org["chief_middle_name"] = detail.get("chiefMiddleName")
 
+    # Safety net: convert any remaining dict/list values to strings
+    for key, val in org.items():
+        if isinstance(val, (dict, list)):
+            org[key] = str(val)
+
     return org
 
 
@@ -270,7 +275,7 @@ def _extract_house(item, fias_data=None):
         "house_type_name": None,
         "house_condition_code": None,
         "house_condition_name": None,
-        "wall_material": item.get("wallMaterial"),
+        "wall_material": None,
         "house_uid": item.get("houseUid") or item.get("uid"),
         "management_org_guid": None,
         "fias_objectguid": item.get("houseGuid"),
@@ -311,6 +316,13 @@ def _extract_house(item, fias_data=None):
     house["house_condition_code"] = house["house_condition_code"] or item.get("houseConditionCode")
     house["house_condition_name"] = house["house_condition_name"] or item.get("houseConditionName")
 
+    # Wall material (can be dict or string)
+    wm = item.get("wallMaterial")
+    if isinstance(wm, dict):
+        house["wall_material"] = wm.get("name") or wm.get("code")
+    elif isinstance(wm, str):
+        house["wall_material"] = wm
+
     # Management org
     mgmt_org = item.get("managementOrganization")
     if isinstance(mgmt_org, dict):
@@ -323,6 +335,11 @@ def _extract_house(item, fias_data=None):
         house["cadastre_number"] = house["cadastre_number"] or fias.get("cadastreNumber")
         house["oktmo_code"] = house["oktmo_code"] or fias.get("oktmo")
         house["oktmo_name"] = house["oktmo_name"] or fias.get("oktmoName")
+
+    # Safety net: convert any remaining dict/list values to strings
+    for key, val in house.items():
+        if isinstance(val, (dict, list)):
+            house[key] = str(val)
 
     return house
 
@@ -399,6 +416,11 @@ def _extract_characteristics(gis_guid, info):
         chars["overhaul_fund_forming_code"] = first.get("code") or first.get("fundFormingCode")
         chars["overhaul_fund_forming_name"] = first.get("name") or first.get("fundFormingName") or first.get("overhaulFundFormingMethod")
 
+    # Safety net: convert any remaining dict/list values to strings
+    for key, val in chars.items():
+        if isinstance(val, (dict, list)):
+            chars[key] = str(val)
+
     return chars
 
 
@@ -430,6 +452,12 @@ def _extract_overhaul_funds(gis_guid, info):
             "end_date": _fix_date(f.get("endDate")),
             "overhaul_fund_forming_method": f.get("overhaulFundFormingMethod") or f.get("majorRepairsFormingMethod"),
         })
+
+    # Safety net: convert any remaining dict/list values to strings
+    for fund in funds:
+        for key, val in fund.items():
+            if isinstance(val, (dict, list)):
+                fund[key] = str(val)
 
     return funds
 
@@ -490,6 +518,11 @@ def _extract_management(gis_guid, data):
         record["energy_efficiency"] = ee.get("name") or ee.get("code")
     elif ee:
         record["energy_efficiency"] = str(ee)
+
+    # Safety net: convert any remaining dict/list values to strings
+    for key, val in record.items():
+        if isinstance(val, (dict, list)):
+            record[key] = str(val)
 
     return record
 
