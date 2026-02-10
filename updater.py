@@ -117,6 +117,52 @@ def _fix_date(val):
     return val
 
 
+def _safe_int(val):
+    """Safely convert to int. Handles ranges like '13-17' (takes max), strings, dicts."""
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return val
+    if isinstance(val, float):
+        return int(val)
+    if isinstance(val, dict):
+        return None
+    val = str(val).strip()
+    if not val:
+        return None
+    # Handle ranges like "13-17" → take max
+    if "-" in val and not val.startswith("-"):
+        parts = val.split("-")
+        nums = []
+        for p in parts:
+            try:
+                nums.append(int(p.strip()))
+            except ValueError:
+                pass
+        return max(nums) if nums else None
+    try:
+        return int(val)
+    except ValueError:
+        return None
+
+
+def _safe_float(val):
+    """Safely convert to float. Handles strings, dicts."""
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, dict):
+        return None
+    val = str(val).strip()
+    if not val:
+        return None
+    try:
+        return float(val.replace(",", "."))
+    except ValueError:
+        return None
+
+
 # ============ Field extraction helpers ============
 
 def _extract_org(search_item, detail=None):
@@ -260,16 +306,16 @@ def _extract_house(item, fias_data=None):
         "cadastre_number": None,
         "oktmo_code": None,
         "oktmo_name": None,
-        "building_year": item.get("buildingYear") or item.get("builtYear"),
-        "operation_year": item.get("operationYear"),
-        "reconstruction_year": item.get("reconstructionYear"),
-        "max_floor_count": item.get("maxFloorCount") or item.get("floorCount"),
-        "deterioration": item.get("deterioration"),
+        "building_year": _safe_int(item.get("buildingYear") or item.get("builtYear")),
+        "operation_year": _safe_int(item.get("operationYear")),
+        "reconstruction_year": _safe_int(item.get("reconstructionYear")),
+        "max_floor_count": _safe_int(item.get("maxFloorCount") or item.get("floorCount")),
+        "deterioration": _safe_float(item.get("deterioration")),
         "deterioration_date": _fix_date(item.get("deteriorationDate")),
-        "total_square": item.get("totalSquare"),
-        "residential_square": item.get("residentialSquare"),
-        "residential_premise_count": item.get("residentialPremiseCount"),
-        "nonresidential_premise_count": item.get("nonresidentialPremiseCount"),
+        "total_square": _safe_float(item.get("totalSquare")),
+        "residential_square": _safe_float(item.get("residentialSquare")),
+        "residential_premise_count": _safe_int(item.get("residentialPremiseCount")),
+        "nonresidential_premise_count": _safe_int(item.get("nonresidentialPremiseCount")),
         "plan_series": item.get("planSeries"),
         "house_type_code": None,
         "house_type_name": None,
