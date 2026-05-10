@@ -434,6 +434,15 @@ def replace_house_org_links(house_guid: str, org_guids: list[str], table: str) -
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                    INSERT INTO gis_zhkh.organizations (gis_guid, full_name, updated_at)
+                    SELECT guid::uuid, 'GIS linked organization ' || guid, NOW()
+                    FROM unnest(%s::text[]) AS guid
+                    ON CONFLICT (gis_guid) DO NOTHING
+                """,
+                (org_guids,),
+            )
             cur.execute(f"DELETE FROM gis_zhkh.{table} WHERE house_gis_guid = %s", (house_guid,))
             for org_guid in org_guids:
                 cur.execute(

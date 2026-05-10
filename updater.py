@@ -282,9 +282,12 @@ def _extract_org(search_item, detail=None):
             org["chief_first_name"] = detail.get("chiefFirstName")
             org["chief_middle_name"] = detail.get("chiefMiddleName")
 
-    # Safety net: convert any remaining dict/list values to strings
+    # Safety net: convert any remaining dict/list values to strings.
+    # org_roles is a Postgres text[] column, so psycopg2 must receive a list.
     for key, val in org.items():
-        if isinstance(val, (dict, list)):
+        if key == "org_roles" and isinstance(val, list):
+            org[key] = [str(item) for item in val if item]
+        elif isinstance(val, (dict, list)):
             org[key] = str(val)
 
     return org
