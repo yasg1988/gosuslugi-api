@@ -14,6 +14,8 @@ DB_NAME = os.environ.get("DB_NAME", "postgres")
 DB_USER = os.environ.get("DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "postgres")
 
+YOSHKAR_OLA_ADDRESS_PATTERN = "%Йошкар-Ола%"
+
 
 def get_connection():
     return psycopg2.connect(
@@ -23,22 +25,39 @@ def get_connection():
 
 
 def get_all_house_guids() -> list[str]:
-    """Get all house GIS GUIDs sorted (for chunking)."""
+    """Get Yoshkar-Ola house GIS GUIDs sorted (for chunking)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT gis_guid FROM gis_zhkh.houses ORDER BY gis_guid")
+            cur.execute(
+                """
+                SELECT gis_guid
+                FROM gis_zhkh.houses
+                WHERE formatted_address ILIKE %s
+                ORDER BY gis_guid
+                """,
+                (YOSHKAR_OLA_ADDRESS_PATTERN,),
+            )
             return [str(row[0]) for row in cur.fetchall()]
     finally:
         conn.close()
 
 
 def get_all_org_guids() -> list[str]:
-    """Get all organization GIS GUIDs."""
+    """Get organization GIS GUIDs relevant to Yoshkar-Ola houses."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT gis_guid FROM gis_zhkh.organizations ORDER BY gis_guid")
+            cur.execute(
+                """
+                SELECT DISTINCT h.management_org_guid
+                FROM gis_zhkh.houses h
+                WHERE h.formatted_address ILIKE %s
+                  AND h.management_org_guid IS NOT NULL
+                ORDER BY h.management_org_guid
+                """,
+                (YOSHKAR_OLA_ADDRESS_PATTERN,),
+            )
             return [str(row[0]) for row in cur.fetchall()]
     finally:
         conn.close()

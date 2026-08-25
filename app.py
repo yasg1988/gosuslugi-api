@@ -95,10 +95,10 @@ def get_fias_house(fias_guid: str):
 
 # ============ Update endpoints ============
 
-def _check_not_running():
-    """Raise if an update is already running."""
-    status = updater.get_status()
-    if status["status"] == "running":
+def _reserve_update(update_type: str, chunk: int | None = None, total_chunks: int | None = None):
+    """Reserve the single updater slot before scheduling background work."""
+    started, status = updater.begin_update(update_type, chunk=chunk, total_chunks=total_chunks)
+    if not started:
         raise HTTPException(
             status_code=409,
             detail=f"Update already running: {status['type']} "
@@ -109,16 +109,16 @@ def _check_not_running():
 @app.post("/update/organizations")
 def start_update_organizations(background_tasks: BackgroundTasks):
     """Обновить организации (УК, ТСЖ) из ГИС ЖКХ."""
-    _check_not_running()
-    background_tasks.add_task(updater.update_organizations)
+    _reserve_update("organizations")
+    background_tasks.add_task(updater.update_organizations, True)
     return {"status": "started", "type": "organizations"}
 
 
 @app.post("/update/houses")
 def start_update_houses(background_tasks: BackgroundTasks):
     """Обновить дома по всем организациям."""
-    _check_not_running()
-    background_tasks.add_task(updater.update_houses)
+    _reserve_update("houses")
+    background_tasks.add_task(updater.update_houses, True)
     return {"status": "started", "type": "houses"}
 
 
@@ -130,10 +130,10 @@ def start_update_house_info(
     delay: float = Query(1.5, ge=0, description="Задержка между запросами (сек)"),
 ):
     """Обновить характеристики домов + капремонт (чанками)."""
-    _check_not_running()
     if chunk > total_chunks:
         raise HTTPException(status_code=400, detail="chunk > total_chunks")
-    background_tasks.add_task(updater.update_house_info, chunk, total_chunks, delay)
+    _reserve_update("house_info", chunk=chunk, total_chunks=total_chunks)
+    background_tasks.add_task(updater.update_house_info, chunk, total_chunks, delay, True)
     return {"status": "started", "type": "house_info", "chunk": chunk, "total_chunks": total_chunks}
 
 
@@ -145,10 +145,10 @@ def start_update_management(
     delay: float = Query(1.5, ge=0, description="Задержка между запросами (сек)"),
 ):
     """Обновить управление домами + связи с организациями (чанками)."""
-    _check_not_running()
     if chunk > total_chunks:
         raise HTTPException(status_code=400, detail="chunk > total_chunks")
-    background_tasks.add_task(updater.update_management, chunk, total_chunks, delay)
+    _reserve_update("management", chunk=chunk, total_chunks=total_chunks)
+    background_tasks.add_task(updater.update_management, chunk, total_chunks, delay, True)
     return {"status": "started", "type": "management", "chunk": chunk, "total_chunks": total_chunks}
 
 

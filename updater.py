@@ -3,8 +3,10 @@
 import time
 import logging
 import threading
+import re
 from datetime import datetime
 
+import requests
 from gosuslugi_api.clients import GosUslugiAPIClient
 import database
 
@@ -29,6 +31,30 @@ _update_state = {
 def get_status():
     with _state_lock:
         return dict(_update_state)
+
+
+def begin_update(update_type, chunk=None, total_chunks=None):
+    """Atomically reserve the single updater slot.
+
+    FastAPI schedules long jobs after the HTTP response is built. Reserving the
+    slot before scheduling prevents another cron from starting in that gap.
+    """
+    with _state_lock:
+        if _update_state["status"] == "running":
+            return False, dict(_update_state)
+        _update_state.update({
+            "status": "running",
+            "type": update_type,
+            "chunk": chunk,
+            "total_chunks": total_chunks,
+            "progress": 0,
+            "total": None,
+            "started_at": datetime.utcnow().isoformat(),
+            "finished_at": None,
+            "result": None,
+            "errors": [],
+        })
+        return True, dict(_update_state)
 
 
 def _set_state(**kwargs):
@@ -77,6 +103,41 @@ def _add_error(error):
             errs.append(str(error))
 
 
+def _is_not_found_error(error):
+    """Return True for API 404 responses that mean a GUID is absent upstream."""
+    return (
+        isinstance(error, requests.exceptions.HTTPError)
+        and error.response is not None
+        and error.response.status_code == 404
+    )
+
+
+def _portal_maintenance_message(html):
+    """Extract a concise maintenance message from the portal stub page."""
+    if not html or "регламентные работы" not in html:
+        return None
+
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = " ".join(text.replace("\r", "\n").split())
+    marker = "Служба оператора сообщает"
+    marker_index = text.find(marker)
+    if marker_index >= 0:
+        text = text[marker_index:]
+    return text[:300]
+
+
+def _ensure_portal_available():
+    """Fail fast when dom.gosuslugi.ru is on scheduled maintenance."""
+    try:
+        response = requests.get("https://dom.gosuslugi.ru/", timeout=15)
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"GIS ZhKH portal unavailable: {e}") from e
+
+    message = _portal_maintenance_message(response.text)
+    if message:
+        raise RuntimeError(f"GIS ZhKH portal maintenance: {message}")
+
+
 def _get_chunk(items, chunk, total_chunks):
     """Split items into chunks and return the specified chunk (1-based)."""
     n = len(items)
@@ -97,6 +158,14 @@ def _is_empty(data):
     if isinstance(data, list) and not data:
         return True
     return False
+
+
+def _unwrap_house_info(data):
+    """Return the actual house payload from the current GIS GKH envelope."""
+    if isinstance(data, dict) and "info" in data:
+        nested = data.get("info")
+        return nested if isinstance(nested, dict) else None
+    return data
 
 
 def _fix_date(val):
@@ -492,11 +561,16 @@ def _extract_overhaul_funds(gis_guid, info):
         funds.append({
             "gis_guid": gis_guid,
             "fund_forming_code": f.get("code") or f.get("fundFormingCode"),
-            "fund_forming_name": f.get("name") or f.get("fundFormingName"),
+            "fund_forming_name": (
+                f.get("name")
+                or f.get("fundFormingName")
+                or f.get("overhaulFundFormingMethod")
+                or f.get("majorRepairsFormingMethod")
+            ),
             "fund_attribute_code": fund_attr.get("code"),
             "fund_attribute_name": fund_attr.get("name"),
             "fund_attribute_tag": fund_attr.get("tag"),
-            "status": f.get("status"),
+            "status": f.get("status") or ("active" if f.get("actual") is True else None),
             "start_date": _fix_date(f.get("startDate")),
             "end_date": _fix_date(f.get("endDate")),
             "overhaul_fund_forming_method": f.get("overhaulFundFormingMethod") or f.get("majorRepairsFormingMethod"),
@@ -578,21 +652,24 @@ def _extract_management(gis_guid, data):
 
 # ============ Main update functions ============
 
-def update_organizations():
+def update_organizations(prestarted: bool = False):
     """Refresh all existing organizations by their GUIDs.
 
     Reads org GUIDs from the database (already discovered during initial load),
     fetches fresh details for each via get_organization(guid), and upserts.
     """
-    _reset_state("organizations")
+    if not prestarted:
+        _reset_state("organizations")
     api = GosUslugiAPIClient(timeout=15, keep_alive=True, rate_limit=1.0)
 
     try:
+        _ensure_portal_available()
         org_guids = database.get_all_org_guids()
         _set_state(total=len(org_guids))
         logger.info(f"Refreshing {len(org_guids)} organizations...")
 
         all_orgs = []
+        not_found_count = 0
         for i, guid in enumerate(org_guids):
             try:
                 detail = api.get_organization(guid)
@@ -605,13 +682,20 @@ def update_organizations():
                 org["gis_guid"] = guid  # ensure GUID is set
                 all_orgs.append(org)
             except Exception as e:
-                _add_error(f"org {guid}: {e}")
-                logger.error(f"Error refreshing org {guid}: {e}")
+                if _is_not_found_error(e):
+                    not_found_count += 1
+                    logger.warning(f"Organization not found upstream for {guid}")
+                else:
+                    _add_error(f"org {guid}: {e}")
+                    logger.error(f"Error refreshing org {guid}: {e}")
 
             _set_state(progress=i + 1)
 
         count = database.upsert_organizations(all_orgs)
-        _finish_state(f"Refreshed {count} of {len(org_guids)} organizations")
+        _finish_state(
+            f"Refreshed {count} of {len(org_guids)} organizations, "
+            f"{not_found_count} not found"
+        )
         logger.info(f"Organizations update done: {count}")
 
     except Exception as e:
@@ -620,17 +704,20 @@ def update_organizations():
         raise
 
 
-def update_houses():
+def update_houses(prestarted: bool = False):
     """Fetch and upsert all houses from all organizations."""
-    _reset_state("houses")
+    if not prestarted:
+        _reset_state("houses")
     api = GosUslugiAPIClient(timeout=15, keep_alive=True, rate_limit=1.0)
 
     try:
+        _ensure_portal_available()
         org_guids = database.get_all_org_guids()
         _set_state(total=len(org_guids))
         logger.info(f"Fetching houses for {len(org_guids)} organizations...")
 
         all_houses = {}  # gis_guid -> house dict (deduplicate)
+        not_found_count = 0
 
         for i, org_guid in enumerate(org_guids):
             try:
@@ -653,14 +740,21 @@ def update_houses():
                         all_houses[house["gis_guid"]] = house
 
             except Exception as e:
-                _add_error(f"org {org_guid}: {e}")
-                logger.error(f"Error fetching houses for org {org_guid}: {e}")
+                if _is_not_found_error(e):
+                    not_found_count += 1
+                    logger.warning(f"Houses not found upstream for org {org_guid}")
+                else:
+                    _add_error(f"org {org_guid}: {e}")
+                    logger.error(f"Error fetching houses for org {org_guid}: {e}")
 
             _set_state(progress=i + 1)
 
         houses_list = list(all_houses.values())
         count = database.upsert_houses(houses_list)
-        _finish_state(f"Upserted {count} houses from {len(org_guids)} orgs")
+        _finish_state(
+            f"Upserted {count} houses from {len(org_guids)} orgs, "
+            f"{not_found_count} orgs not found"
+        )
         logger.info(f"Houses update done: {count}")
 
     except Exception as e:
@@ -669,17 +763,19 @@ def update_houses():
         raise
 
 
-def update_house_info(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5):
+def update_house_info(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5, prestarted: bool = False):
     """Fetch and upsert house characteristics + overhaul fund (chunked).
 
     Each house requires an individual HTTP request to dom.gosuslugi.ru.
     Mandatory delay between requests prevents empty responses from the API.
     """
-    _reset_state("house_info", chunk=chunk, total_chunks=total_chunks)
+    if not prestarted:
+        _reset_state("house_info", chunk=chunk, total_chunks=total_chunks)
     # rate_limit=0 because we manage delay manually
     api = GosUslugiAPIClient(timeout=15, keep_alive=True, rate_limit=0)
 
     try:
+        _ensure_portal_available()
         all_guids = database.get_all_house_guids()
         chunk_guids = _get_chunk(all_guids, chunk, total_chunks)
         _set_state(total=len(chunk_guids))
@@ -688,17 +784,18 @@ def update_house_info(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5)
         chars_count = 0
         funds_count = 0
         empty_count = 0
+        not_found_count = 0
 
         for i, guid in enumerate(chunk_guids):
             try:
                 time.sleep(delay)
-                info = api.get_house_info(guid)
+                info = _unwrap_house_info(api.get_house_info(guid))
 
                 # Retry once on empty response
                 if _is_empty(info):
                     logger.warning(f"Empty house_info for {guid}, retrying in 3s...")
                     time.sleep(3)
-                    info = api.get_house_info(guid)
+                    info = _unwrap_house_info(api.get_house_info(guid))
 
                 if _is_empty(info):
                     empty_count += 1
@@ -718,13 +815,18 @@ def update_house_info(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5)
                     funds_count += len(funds)
 
             except Exception as e:
-                _add_error(f"house_info {guid}: {e}")
-                logger.error(f"Error for house_info {guid}: {e}")
+                if _is_not_found_error(e):
+                    not_found_count += 1
+                    logger.warning(f"house_info not found upstream for {guid}")
+                else:
+                    _add_error(f"house_info {guid}: {e}")
+                    logger.error(f"Error for house_info {guid}: {e}")
 
             _set_state(progress=i + 1)
 
         result = (f"Chunk {chunk}/{total_chunks}: "
-                  f"{chars_count} characteristics, {funds_count} fund entries, {empty_count} empty")
+                  f"{chars_count} characteristics, {funds_count} fund entries, "
+                  f"{empty_count} empty, {not_found_count} not found")
         _finish_state(result)
         logger.info(f"house_info done: {result}")
 
@@ -734,16 +836,18 @@ def update_house_info(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5)
         raise
 
 
-def update_management(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5):
+def update_management(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5, prestarted: bool = False):
     """Fetch and upsert house management + org links (chunked).
 
     Each house requires an individual HTTP request.
     Also updates municipality_orgs and resource_providers link tables.
     """
-    _reset_state("management", chunk=chunk, total_chunks=total_chunks)
+    if not prestarted:
+        _reset_state("management", chunk=chunk, total_chunks=total_chunks)
     api = GosUslugiAPIClient(timeout=15, keep_alive=True, rate_limit=0)
 
     try:
+        _ensure_portal_available()
         all_guids = database.get_all_house_guids()
         chunk_guids = _get_chunk(all_guids, chunk, total_chunks)
         _set_state(total=len(chunk_guids))
@@ -753,6 +857,7 @@ def update_management(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5)
         muni_count = 0
         res_count = 0
         empty_count = 0
+        not_found_count = 0
 
         for i, guid in enumerate(chunk_guids):
             try:
@@ -799,14 +904,18 @@ def update_management(chunk: int = 1, total_chunks: int = 1, delay: float = 1.5)
                     res_count += len(res_guids)
 
             except Exception as e:
-                _add_error(f"management {guid}: {e}")
-                logger.error(f"Error for management {guid}: {e}")
+                if _is_not_found_error(e):
+                    not_found_count += 1
+                    logger.warning(f"management not found upstream for {guid}")
+                else:
+                    _add_error(f"management {guid}: {e}")
+                    logger.error(f"Error for management {guid}: {e}")
 
             _set_state(progress=i + 1)
 
         result = (f"Chunk {chunk}/{total_chunks}: "
                   f"{mgmt_count} management, {muni_count} municipality, "
-                  f"{res_count} resource, {empty_count} empty")
+                  f"{res_count} resource, {empty_count} empty, {not_found_count} not found")
         _finish_state(result)
         logger.info(f"management done: {result}")
 
