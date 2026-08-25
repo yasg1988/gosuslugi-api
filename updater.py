@@ -521,8 +521,12 @@ def _extract_characteristics(gis_guid, info):
     # Energy efficiency
     ee = info.get("energyEfficiency") or info.get("energyEfficiencyClass") or {}
     if isinstance(ee, dict):
-        chars["energy_efficiency_code"] = ee.get("code") or ee.get("energyEfficiencyDesignation")
-        chars["energy_efficiency_name"] = ee.get("name") or ee.get("energyEfficiencyName")
+        chars["energy_efficiency_code"] = ee.get("code")
+        chars["energy_efficiency_name"] = (
+            ee.get("name")
+            or ee.get("energyEfficiencyName")
+            or ee.get("energyEfficiencyDesignation")
+        )
     elif isinstance(ee, str):
         chars["energy_efficiency_name"] = ee
 

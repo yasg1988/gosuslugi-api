@@ -39,3 +39,16 @@ def test_extracts_overhaul_fund_from_current_payload():
             "overhaul_fund_forming_method": "Счет регионального оператора",
         }
     ]
+
+
+def test_energy_efficiency_designation_is_not_stored_as_code():
+    payload = {
+        "energyEfficiency": {
+            "energyEfficiencyDesignation": "Не установлено",
+        }
+    }
+
+    characteristics = updater._extract_characteristics("house-1", payload)
+
+    assert characteristics["energy_efficiency_code"] is None
+    assert characteristics["energy_efficiency_name"] == "Не установлено"
